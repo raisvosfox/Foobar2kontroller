@@ -7,25 +7,40 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 object BeefwebClient {
+    private var baseUrl: String = ""
+    private var _api: BeefwebApi? = null
+
+    val api: BeefwebApi
+        get() = _api ?: throw IllegalStateException("BeefwebClient not initialized. Call initialize() first.")
+
+    fun isInitialized() = _api != null
+
+    fun getBaseUrl() = baseUrl
 
     fun artworkUrl(playlistId: String, index: Int): String {
-        return "${BASE_URL}api/artwork/$playlistId/$index"
+        return "${baseUrl}api/artwork/$playlistId/$index"
     }
 
-    // Use the local IP you found earlier with ipconfig — must end in a slash
-    private const val BASE_URL = "http://192.168.1.103:8880/"
+    fun initialize(url: String) {
+        val formattedUrl = if (url.startsWith("http")) {
+            if (url.endsWith("/")) url else "$url/"
+        } else {
+            val base = "http://$url"
+            if (base.endsWith("/")) base else "$base/"
+        }
+        
+        baseUrl = formattedUrl
 
-    private val loggingInterceptor = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
-    }
+        val loggingInterceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+        }
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .addInterceptor(loggingInterceptor)
-        .build()
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .build()
 
-    val api: BeefwebApi by lazy {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
+        _api = Retrofit.Builder()
+            .baseUrl(formattedUrl)
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()

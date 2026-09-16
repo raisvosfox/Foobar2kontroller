@@ -18,13 +18,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -57,14 +60,34 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        
+        val prefs = getSharedPreferences("beefweb_prefs", MODE_PRIVATE)
+        val savedUrl = prefs.getString("server_url", null)
+        if (savedUrl != null) {
+            BeefwebClient.initialize(savedUrl)
+        }
+        
         enableEdgeToEdge()
         setContent {
             FoobarThingyTheme {
+                var isInitialized by remember { mutableStateOf(BeefwebClient.isInitialized()) }
+                
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = Color(0xFF000000)
                 ) { innerPadding ->
-                    PlayerScreen(modifier = Modifier.padding(innerPadding))
+                    if (!isInitialized) {
+                        SetupScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            onUrlSet = { url ->
+                                BeefwebClient.initialize(url)
+                                prefs.edit().putString("server_url", url).apply()
+                                isInitialized = true
+                            }
+                        )
+                    } else {
+                        PlayerScreen(modifier = Modifier.padding(innerPadding))
+                    }
                 }
             }
         }
@@ -235,6 +258,49 @@ fun InfoAndControls(
             style = MaterialTheme.typography.bodySmall,
             fontFamily = syneMonoFamily
         )
+    }
+}
+
+@Composable
+fun SetupScreen(
+    modifier: Modifier = Modifier,
+    onUrlSet: (String) -> Unit
+) {
+    var url by remember { mutableStateOf("") }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "Enter Beefweb URL",
+            style = MaterialTheme.typography.headlineMedium,
+            color = Color.White,
+            fontFamily = syneMonoFamily
+        )
+        Text(
+            text = "Example: 192.168.1.100:8880",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.5f),
+            fontFamily = syneMonoFamily
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        TextField(
+            value = url,
+            onValueChange = { url = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("http://192.168.x.x:8880") },
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(
+            onClick = { if (url.isNotBlank()) onUrlSet(url) },
+            modifier = Modifier.fillMaxWidth(0.6f)
+        ) {
+            Text("Connect", fontFamily = syneMonoFamily)
+        }
     }
 }
 
