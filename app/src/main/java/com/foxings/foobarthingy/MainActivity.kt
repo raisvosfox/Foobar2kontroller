@@ -5,8 +5,10 @@ import android.content.res.Configuration
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,10 +19,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -56,37 +70,90 @@ val syneMonoFamily = FontFamily(
     Font(R.font.synemono)
 )
 
+enum class AppScreen {
+    Setup, Player, Settings
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
         val prefs = getSharedPreferences("beefweb_prefs", MODE_PRIVATE)
-        val savedUrl = prefs.getString("server_url", null)
-        if (savedUrl != null) {
-            BeefwebClient.initialize(savedUrl)
-        }
         
         enableEdgeToEdge()
         setContent {
             FoobarThingyTheme {
-                var isInitialized by remember { mutableStateOf(BeefwebClient.isInitialized()) }
+                var currentScreen by remember { 
+                    mutableStateOf(if (BeefwebClient.isInitialized()) AppScreen.Player else AppScreen.Setup) 
+                }
                 
+                var showControls by remember { mutableStateOf(prefs.getBoolean("show_controls", false)) }
+                var bgColorHex by remember { mutableStateOf(prefs.getString("bg_color", "#000000") ?: "#000000") }
+                var textColorHex by remember { mutableStateOf(prefs.getString("text_color", "#FFFFFF") ?: "#FFFFFF") }
+                
+                val bgColor = remember(bgColorHex) { 
+                    try { Color(android.graphics.Color.parseColor(bgColorHex)) } catch (e: Exception) { Color.Black } 
+                }
+                val textColor = remember(textColorHex) { 
+                    try { Color(android.graphics.Color.parseColor(textColorHex)) } catch (e: Exception) { Color.White } 
+                }
+
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
-                    containerColor = Color(0xFF000000)
+                    containerColor = bgColor
                 ) { innerPadding ->
-                    if (!isInitialized) {
-                        SetupScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            onUrlSet = { url ->
-                                BeefwebClient.initialize(url)
-                                prefs.edit().putString("server_url", url).apply()
-                                isInitialized = true
+                    when (currentScreen) {
+                        AppScreen.Setup -> {
+                            SetupScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                onUrlSet = { url ->
+                                    BeefwebClient.initialize(url)
+                                    prefs.edit().putString("server_url", url).apply()
+                                    currentScreen = AppScreen.Player
+                                }
+                            )
+                        }
+                        AppScreen.Player -> {
+                            BackHandler {
+                                currentScreen = AppScreen.Settings
                             }
-                        )
-                    } else {
-                        PlayerScreen(modifier = Modifier.padding(innerPadding))
+                            PlayerScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                showControls = showControls,
+                                textColor = textColor
+                            )
+                        }
+                        AppScreen.Settings -> {
+                            BackHandler {
+                                currentScreen = AppScreen.Player
+                            }
+                            SettingsScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                showControls = showControls,
+                                onShowControlsChange = { 
+                                    showControls = it
+                                    prefs.edit().putBoolean("show_controls", it).apply()
+                                },
+                                bgColorHex = bgColorHex,
+                                onBgColorChange = {
+                                    bgColorHex = it
+                                    prefs.edit().putString("bg_color", it).apply()
+                                },
+                                textColorHex = textColorHex,
+                                onTextColorChange = {
+                                    textColorHex = it
+                                    prefs.edit().putString("text_color", it).apply()
+                                },
+                                serverUrl = prefs.getString("server_url", "") ?: "",
+                                onUrlUpdate = { url ->
+                                    BeefwebClient.initialize(url)
+                                    prefs.edit().putString("server_url", url).apply()
+                                },
+                                onBack = { currentScreen = AppScreen.Player },
+                                currentTextColor = textColor
+                            )
+                        }
                     }
                 }
             }
@@ -95,7 +162,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun PlayerScreen(modifier: Modifier = Modifier) {
+fun PlayerScreen(
+    modifier: Modifier = Modifier,
+    showControls: Boolean,
+    textColor: Color
+) {
     var artist by rememberSaveable { mutableStateOf("") }
     var title by rememberSaveable { mutableStateOf("") }
     var playbackState by rememberSaveable { mutableStateOf("stopped") }
@@ -172,7 +243,18 @@ fun PlayerScreen(modifier: Modifier = Modifier) {
                     title = title,
                     artist = artist,
                     playbackState = playbackState,
-                    errorText = errorText
+                    errorText = errorText,
+                    showControls = showControls,
+                    textColor = textColor,
+                    onPrevious = { sendCommand { BeefwebClient.api.previous() } },
+                    onPlayPause = {
+                        sendCommand {
+                            if (playbackState == "playing") BeefwebClient.api.pause()
+                            else BeefwebClient.api.play()
+                        }
+                    },
+                    onNext = { sendCommand { BeefwebClient.api.next() } },
+                    onStop = { sendCommand { BeefwebClient.api.stop() } }
                 )
             }
         }
@@ -193,7 +275,18 @@ fun PlayerScreen(modifier: Modifier = Modifier) {
                 title = title,
                 artist = artist,
                 playbackState = playbackState,
-                errorText = errorText
+                errorText = errorText,
+                showControls = showControls,
+                textColor = textColor,
+                onPrevious = { sendCommand { BeefwebClient.api.previous() } },
+                onPlayPause = {
+                    sendCommand {
+                        if (playbackState == "playing") BeefwebClient.api.pause()
+                        else BeefwebClient.api.play()
+                    }
+                },
+                onNext = { sendCommand { BeefwebClient.api.next() } },
+                onStop = { sendCommand { BeefwebClient.api.stop() } }
             )
         }
     }
@@ -218,14 +311,20 @@ fun InfoAndControls(
     title: String,
     artist: String,
     playbackState: String,
-    errorText: String?
+    errorText: String?,
+    showControls: Boolean,
+    textColor: Color,
+    onPrevious: () -> Unit,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    onStop: () -> Unit
 ) {
     // 1. Song name - Syne Mono, Larger and White
     Text(
         text = title.ifBlank { "Nothing playing" },
         style = MaterialTheme.typography.headlineLarge,
         fontFamily = syneMonoFamily,
-        color = Color.White,
+        color = textColor,
         textAlign = TextAlign.Center,
         modifier = Modifier.fillMaxWidth()
     )
@@ -235,7 +334,7 @@ fun InfoAndControls(
         text = artist,
         style = MaterialTheme.typography.headlineSmall,
         fontFamily = syneMonoFamily,
-        color = Color.White.copy(alpha = 0.7f),
+        color = textColor.copy(alpha = 0.7f),
         textAlign = TextAlign.Center,
         modifier = Modifier.fillMaxWidth()
     )
@@ -247,7 +346,7 @@ fun InfoAndControls(
         text = "State: $playbackState",
         style = MaterialTheme.typography.bodyMedium,
         fontFamily = syneMonoFamily,
-        color = Color.White.copy(alpha = 0.5f)
+        color = textColor.copy(alpha = 0.5f)
     )
 
     errorText?.let {
@@ -258,6 +357,170 @@ fun InfoAndControls(
             style = MaterialTheme.typography.bodySmall,
             fontFamily = syneMonoFamily
         )
+    }
+
+    if (showControls) {
+        Spacer(modifier = Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconButton(
+                onClick = onPrevious,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(
+                    Icons.Default.SkipPrevious,
+                    contentDescription = "Previous",
+                    modifier = Modifier.size(32.dp),
+                    tint = textColor
+                )
+            }
+            IconButton(
+                onClick = onPlayPause,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(
+                    if (playbackState == "playing") Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = "Play/Pause",
+                    modifier = Modifier.size(32.dp),
+                    tint = textColor
+                )
+            }
+            IconButton(
+                onClick = onNext,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(
+                    Icons.Default.SkipNext,
+                    contentDescription = "Next",
+                    modifier = Modifier.size(32.dp),
+                    tint = textColor
+                )
+            }
+            IconButton(
+                onClick = onStop,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(
+                    Icons.Default.Stop,
+                    contentDescription = "Stop",
+                    modifier = Modifier.size(32.dp),
+                    tint = textColor
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsScreen(
+    modifier: Modifier = Modifier,
+    showControls: Boolean,
+    onShowControlsChange: (Boolean) -> Unit,
+    bgColorHex: String,
+    onBgColorChange: (String) -> Unit,
+    textColorHex: String,
+    onTextColorChange: (String) -> Unit,
+    serverUrl: String,
+    onUrlUpdate: (String) -> Unit,
+    onBack: () -> Unit,
+    currentTextColor: Color
+) {
+    var urlInput by remember { mutableStateOf(serverUrl) }
+    var bgInput by remember { mutableStateOf(bgColorHex) }
+    var textInput by remember { mutableStateOf(textColorHex) }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "Settings",
+            style = MaterialTheme.typography.headlineMedium,
+            color = currentTextColor,
+            fontFamily = syneMonoFamily
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                "Show Playback Controls",
+                modifier = Modifier.weight(1f),
+                color = currentTextColor,
+                fontFamily = syneMonoFamily
+            )
+            Switch(checked = showControls, onCheckedChange = onShowControlsChange)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        HorizontalDivider(color = currentTextColor.copy(alpha = 0.2f))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            "Background Color (Hex)",
+            modifier = Modifier.fillMaxWidth(),
+            color = currentTextColor,
+            fontFamily = syneMonoFamily
+        )
+        TextField(
+            value = bgInput,
+            onValueChange = { 
+                bgInput = it
+                if (it.length == 7 && it.startsWith("#")) onBgColorChange(it)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            "Text Color (Hex)",
+            modifier = Modifier.fillMaxWidth(),
+            color = currentTextColor,
+            fontFamily = syneMonoFamily
+        )
+        TextField(
+            value = textInput,
+            onValueChange = { 
+                textInput = it
+                if (it.length == 7 && it.startsWith("#")) onTextColorChange(it)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+        HorizontalDivider(color = currentTextColor.copy(alpha = 0.2f))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            "Beefweb URL",
+            modifier = Modifier.fillMaxWidth(),
+            color = currentTextColor,
+            fontFamily = syneMonoFamily
+        )
+        TextField(
+            value = urlInput,
+            onValueChange = { urlInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Button(
+            onClick = { onUrlUpdate(urlInput) },
+            modifier = Modifier.padding(top = 8.dp)
+        ) {
+            Text("Update URL", fontFamily = syneMonoFamily)
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(onClick = onBack) {
+            Text("Back to Player", fontFamily = syneMonoFamily)
+        }
     }
 }
 
@@ -308,7 +571,7 @@ fun SetupScreen(
 @Composable
 fun PlayerScreenPortraitPreview() {
     FoobarThingyTheme {
-        PlayerScreen()
+        PlayerScreen(showControls = true, textColor = Color.White)
     }
 }
 
@@ -316,6 +579,6 @@ fun PlayerScreenPortraitPreview() {
 @Composable
 fun PlayerScreenLandscapePreview() {
     FoobarThingyTheme {
-        PlayerScreen()
+        PlayerScreen(showControls = true, textColor = Color.White)
     }
 }
