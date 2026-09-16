@@ -1,6 +1,8 @@
 # Kontroller
 
-A minimal, Syne Mono themed remote controller for the Beefweb player. DISCLAIMER: CODED USING AI (sorry...)
+## DISCLAIMER: CODED USING AI (sorry...)
+
+A minimal, Syne Mono themed remote controller for the Beefweb player.
 
 ## Features
 - **Auto-Update**: Displays current track, artist, and playback state in real-time.
