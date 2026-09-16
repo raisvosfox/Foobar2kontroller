@@ -11,7 +11,7 @@ A minimal, Syne Mono themed remote controller for the Beefweb player. DISCLAIMER
 
 ## Setup
 1. Install the `Kontroller.apk` from the [Releases](https://github.com/foxings/FoobarThingy/releases) page.
-2. Ensure your Foobar2000 Beefweb server is running and accessible on your local network. ([Link to download Beefweb Component](https://www.foobar2000.org/components/view/foo_beefweb))
+2. Ensure your Foobar2000 Beefweb server is running and accessible on your local network. ([Link to download Beefweb component](https://www.foobar2000.org/components/view/foo_beefweb))
 3. Enter the server URL (e.g., `192.168.x.xxx:8880`) on the initial setup screen.
 
 ## Settings
