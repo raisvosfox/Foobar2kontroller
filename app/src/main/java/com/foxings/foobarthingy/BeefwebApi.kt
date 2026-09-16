@@ -29,4 +29,14 @@ interface BeefwebApi {
 
     @POST("api/player/previous")
     suspend fun previous(): Response<Unit>
+
+    @POST("api/player/volume/set")
+    suspend fun setVolume(
+        @Query("value") value: Double
+    ): Response<Unit>
+
+    @POST("api/player/seek")
+    suspend fun seek(
+        @Query("position") position: Double
+    ): Response<Unit>
 }

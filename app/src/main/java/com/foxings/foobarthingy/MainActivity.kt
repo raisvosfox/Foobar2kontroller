@@ -8,8 +8,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -34,12 +38,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,6 +54,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -64,7 +72,6 @@ import coil.compose.AsyncImage
 import com.foxings.foobarthingy.ui.theme.FoobarThingyTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.Random
 
 val syneMonoFamily = FontFamily(
     Font(R.font.synemono)
@@ -80,6 +87,10 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
         val prefs = getSharedPreferences("beefweb_prefs", MODE_PRIVATE)
+        val savedUrl = prefs.getString("server_url", null)
+        if (savedUrl != null) {
+            BeefwebClient.initialize(savedUrl)
+        }
         
         enableEdgeToEdge()
         setContent {
@@ -88,7 +99,11 @@ class MainActivity : ComponentActivity() {
                     mutableStateOf(if (BeefwebClient.isInitialized()) AppScreen.Player else AppScreen.Setup) 
                 }
                 
-                var showControls by remember { mutableStateOf(prefs.getBoolean("show_controls", false)) }
+                var showPlaybackControls by remember { mutableStateOf(prefs.getBoolean("show_playback_controls", false)) }
+                var showVolumeControl by remember { mutableStateOf(prefs.getBoolean("show_volume_control", false)) }
+                var showSeekBar by remember { mutableStateOf(prefs.getBoolean("show_seek_bar", false)) }
+                var screenSaverEnabled by remember { mutableStateOf(prefs.getBoolean("screensaver_enabled", false)) }
+                
                 var bgColorHex by remember { mutableStateOf(prefs.getString("bg_color", "#000000") ?: "#000000") }
                 var textColorHex by remember { mutableStateOf(prefs.getString("text_color", "#FFFFFF") ?: "#FFFFFF") }
                 
@@ -120,7 +135,10 @@ class MainActivity : ComponentActivity() {
                             }
                             PlayerScreen(
                                 modifier = Modifier.padding(innerPadding),
-                                showControls = showControls,
+                                showPlaybackControls = showPlaybackControls,
+                                showVolumeControl = showVolumeControl,
+                                showSeekBar = showSeekBar,
+                                screenSaverEnabled = screenSaverEnabled,
                                 textColor = textColor
                             )
                         }
@@ -130,10 +148,25 @@ class MainActivity : ComponentActivity() {
                             }
                             SettingsScreen(
                                 modifier = Modifier.padding(innerPadding),
-                                showControls = showControls,
-                                onShowControlsChange = { 
-                                    showControls = it
-                                    prefs.edit().putBoolean("show_controls", it).apply()
+                                showPlaybackControls = showPlaybackControls,
+                                onShowPlaybackControlsChange = { 
+                                    showPlaybackControls = it
+                                    prefs.edit().putBoolean("show_playback_controls", it).apply()
+                                },
+                                showVolumeControl = showVolumeControl,
+                                onShowVolumeControlChange = {
+                                    showVolumeControl = it
+                                    prefs.edit().putBoolean("show_volume_control", it).apply()
+                                },
+                                showSeekBar = showSeekBar,
+                                onShowSeekBarChange = {
+                                    showSeekBar = it
+                                    prefs.edit().putBoolean("show_seek_bar", it).apply()
+                                },
+                                screenSaverEnabled = screenSaverEnabled,
+                                onScreenSaverChange = {
+                                    screenSaverEnabled = it
+                                    prefs.edit().putBoolean("screensaver_enabled", it).apply()
                                 },
                                 bgColorHex = bgColorHex,
                                 onBgColorChange = {
@@ -164,7 +197,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PlayerScreen(
     modifier: Modifier = Modifier,
-    showControls: Boolean,
+    showPlaybackControls: Boolean,
+    showVolumeControl: Boolean,
+    showSeekBar: Boolean,
+    screenSaverEnabled: Boolean,
     textColor: Color
 ) {
     var artist by rememberSaveable { mutableStateOf("") }
@@ -172,7 +208,21 @@ fun PlayerScreen(
     var playbackState by rememberSaveable { mutableStateOf("stopped") }
     var artworkUrl by rememberSaveable { mutableStateOf<String?>(null) }
     var errorText by rememberSaveable { mutableStateOf<String?>(null) }
+    
+    var position by remember { mutableDoubleStateOf(0.0) }
+    var duration by remember { mutableDoubleStateOf(0.0) }
+    var volume by remember { mutableDoubleStateOf(0.0) }
+    var volumeMin by remember { mutableDoubleStateOf(-100.0) }
+    var volumeMax by remember { mutableDoubleStateOf(0.0) }
+
     val scope = rememberCoroutineScope()
+
+    var isFadingOut by remember { mutableStateOf(false) }
+    var isRightAligned by remember { mutableStateOf(false) }
+    val displayAlpha by animateFloatAsState(
+        targetValue = if (isFadingOut) 0f else 1f,
+        animationSpec = tween(durationMillis = 1000)
+    )
 
     suspend fun refresh() {
         try {
@@ -183,6 +233,13 @@ fun PlayerScreen(
             title = columns.getOrElse(1) { "" }
             playbackState = response.player.playbackState
             artworkUrl = BeefwebClient.artworkUrl(activeItem.playlistId, activeItem.index)
+            
+            position = activeItem.position
+            duration = activeItem.duration
+            volume = response.player.volume.value
+            volumeMin = response.player.volume.min
+            volumeMax = response.player.volume.max
+            
             errorText = null
         } catch (e: Exception) {
             errorText = e.message
@@ -207,6 +264,22 @@ fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(screenSaverEnabled) {
+        if (screenSaverEnabled) {
+            while (true) {
+                delay(30000) // Change every 30 seconds
+                isFadingOut = true
+                delay(1100) // Wait for fade out
+                isRightAligned = !isRightAligned
+                isFadingOut = false
+                delay(1100) // Wait for fade in
+            }
+        } else {
+            isFadingOut = false
+            isRightAligned = false
+        }
+    }
+
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val view = LocalView.current
@@ -223,28 +296,89 @@ fun PlayerScreen(
         }
     }
 
-    if (isLandscape) {
-        Row(modifier = modifier.fillMaxSize()) {
-            AlbumArt(
-                url = artworkUrl,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-            )
+    Box(modifier = modifier.fillMaxSize().alpha(displayAlpha)) {
+        if (isLandscape) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                val art = @Composable {
+                    AlbumArt(
+                        url = artworkUrl,
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .fillMaxHeight()
+                    )
+                }
+                val info = @Composable {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        InfoAndControls(
+                            title = title,
+                            artist = artist,
+                            playbackState = playbackState,
+                            errorText = errorText,
+                            showPlaybackControls = showPlaybackControls,
+                            showVolumeControl = showVolumeControl,
+                            showSeekBar = showSeekBar,
+                            position = position,
+                            duration = duration,
+                            volume = volume,
+                            volumeMin = volumeMin,
+                            volumeMax = volumeMax,
+                            textColor = textColor,
+                            onPrevious = { sendCommand { BeefwebClient.api.previous() } },
+                            onPlayPause = {
+                                sendCommand {
+                                    if (playbackState == "playing") BeefwebClient.api.pause()
+                                    else BeefwebClient.api.play()
+                                }
+                            },
+                            onNext = { sendCommand { BeefwebClient.api.next() } },
+                            onStop = { sendCommand { BeefwebClient.api.stop() } },
+                            onSeek = { pos -> sendCommand { BeefwebClient.api.seek(pos) } },
+                            onVolumeChange = { v -> sendCommand { BeefwebClient.api.setVolume(v) } }
+                        )
+                    }
+                }
+
+                if (isRightAligned) {
+                    info()
+                    art()
+                } else {
+                    art()
+                    info()
+                }
+            }
+        } else {
             Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
+                    .fillMaxSize()
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
+                AlbumArt(
+                    url = artworkUrl,
+                    modifier = Modifier.size(280.dp)
+                )
+                Spacer(modifier = Modifier.height(32.dp))
                 InfoAndControls(
                     title = title,
                     artist = artist,
                     playbackState = playbackState,
                     errorText = errorText,
-                    showControls = showControls,
+                    showPlaybackControls = showPlaybackControls,
+                    showVolumeControl = showVolumeControl,
+                    showSeekBar = showSeekBar,
+                    position = position,
+                    duration = duration,
+                    volume = volume,
+                    volumeMin = volumeMin,
+                    volumeMax = volumeMax,
                     textColor = textColor,
                     onPrevious = { sendCommand { BeefwebClient.api.previous() } },
                     onPlayPause = {
@@ -254,40 +388,11 @@ fun PlayerScreen(
                         }
                     },
                     onNext = { sendCommand { BeefwebClient.api.next() } },
-                    onStop = { sendCommand { BeefwebClient.api.stop() } }
+                    onStop = { sendCommand { BeefwebClient.api.stop() } },
+                    onSeek = { pos -> sendCommand { BeefwebClient.api.seek(pos) } },
+                    onVolumeChange = { v -> sendCommand { BeefwebClient.api.setVolume(v) } }
                 )
             }
-        }
-    } else {
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            AlbumArt(
-                url = artworkUrl,
-                modifier = Modifier.size(280.dp)
-            )
-            Spacer(modifier = Modifier.height(32.dp))
-            InfoAndControls(
-                title = title,
-                artist = artist,
-                playbackState = playbackState,
-                errorText = errorText,
-                showControls = showControls,
-                textColor = textColor,
-                onPrevious = { sendCommand { BeefwebClient.api.previous() } },
-                onPlayPause = {
-                    sendCommand {
-                        if (playbackState == "playing") BeefwebClient.api.pause()
-                        else BeefwebClient.api.play()
-                    }
-                },
-                onNext = { sendCommand { BeefwebClient.api.next() } },
-                onStop = { sendCommand { BeefwebClient.api.stop() } }
-            )
         }
     }
 }
@@ -312,14 +417,23 @@ fun InfoAndControls(
     artist: String,
     playbackState: String,
     errorText: String?,
-    showControls: Boolean,
+    showPlaybackControls: Boolean,
+    showVolumeControl: Boolean,
+    showSeekBar: Boolean,
+    position: Double,
+    duration: Double,
+    volume: Double,
+    volumeMin: Double,
+    volumeMax: Double,
     textColor: Color,
     onPrevious: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onSeek: (Double) -> Unit,
+    onVolumeChange: (Double) -> Unit
 ) {
-    // 1. Song name - Syne Mono, Larger and White
+    // 1. Song name - Syne Mono
     Text(
         text = title.ifBlank { "Nothing playing" },
         style = MaterialTheme.typography.headlineLarge,
@@ -329,7 +443,7 @@ fun InfoAndControls(
         modifier = Modifier.fillMaxWidth()
     )
     Spacer(modifier = Modifier.height(12.dp))
-    // 2. Artist name - Syne Mono, White
+    // 2. Artist name - Syne Mono
     Text(
         text = artist,
         style = MaterialTheme.typography.headlineSmall,
@@ -341,7 +455,7 @@ fun InfoAndControls(
 
     Spacer(modifier = Modifier.height(24.dp))
 
-    // 3. Playing state - Syne Mono, White
+    // 3. Playing state - Syne Mono
     Text(
         text = "State: $playbackState",
         style = MaterialTheme.typography.bodyMedium,
@@ -359,53 +473,55 @@ fun InfoAndControls(
         )
     }
 
-    if (showControls) {
+    if (showSeekBar && duration > 0) {
+        Spacer(modifier = Modifier.height(16.dp))
+        Slider(
+            value = position.toFloat(),
+            onValueChange = { onSeek(it.toDouble()) },
+            valueRange = 0f..duration.toFloat(),
+            modifier = Modifier.fillMaxWidth(0.8f),
+            colors = SliderDefaults.colors(
+                thumbColor = textColor,
+                activeTrackColor = textColor,
+                inactiveTrackColor = textColor.copy(alpha = 0.24f)
+            )
+        )
+    }
+
+    if (showPlaybackControls) {
         Spacer(modifier = Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            IconButton(
-                onClick = onPrevious,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    Icons.Default.SkipPrevious,
-                    contentDescription = "Previous",
-                    modifier = Modifier.size(32.dp),
-                    tint = textColor
-                )
+            IconButton(onClick = onPrevious, modifier = Modifier.size(64.dp)) {
+                Icon(Icons.Default.SkipPrevious, contentDescription = "Prev", modifier = Modifier.size(32.dp), tint = textColor)
             }
-            IconButton(
-                onClick = onPlayPause,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    if (playbackState == "playing") Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = "Play/Pause",
-                    modifier = Modifier.size(32.dp),
-                    tint = textColor
-                )
+            IconButton(onClick = onPlayPause, modifier = Modifier.size(64.dp)) {
+                Icon(if (playbackState == "playing") Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = "P/P", modifier = Modifier.size(32.dp), tint = textColor)
             }
-            IconButton(
-                onClick = onNext,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    Icons.Default.SkipNext,
-                    contentDescription = "Next",
-                    modifier = Modifier.size(32.dp),
-                    tint = textColor
-                )
+            IconButton(onClick = onNext, modifier = Modifier.size(64.dp)) {
+                Icon(Icons.Default.SkipNext, contentDescription = "Next", modifier = Modifier.size(32.dp), tint = textColor)
             }
-            IconButton(
-                onClick = onStop,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    Icons.Default.Stop,
-                    contentDescription = "Stop",
-                    modifier = Modifier.size(32.dp),
-                    tint = textColor
-                )
+            IconButton(onClick = onStop, modifier = Modifier.size(64.dp)) {
+                Icon(Icons.Default.Stop, contentDescription = "Stop", modifier = Modifier.size(32.dp), tint = textColor)
             }
+        }
+    }
+
+    if (showVolumeControl) {
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(0.8f)) {
+            Text("VOL", style = MaterialTheme.typography.labelSmall, color = textColor, fontFamily = syneMonoFamily)
+            Spacer(modifier = Modifier.width(8.dp))
+            Slider(
+                value = volume.toFloat(),
+                onValueChange = { onVolumeChange(it.toDouble()) },
+                valueRange = volumeMin.toFloat()..volumeMax.toFloat(),
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = textColor,
+                    activeTrackColor = textColor,
+                    inactiveTrackColor = textColor.copy(alpha = 0.24f)
+                )
+            )
         }
     }
 }
@@ -413,8 +529,14 @@ fun InfoAndControls(
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
-    showControls: Boolean,
-    onShowControlsChange: (Boolean) -> Unit,
+    showPlaybackControls: Boolean,
+    onShowPlaybackControlsChange: (Boolean) -> Unit,
+    showVolumeControl: Boolean,
+    onShowVolumeControlChange: (Boolean) -> Unit,
+    showSeekBar: Boolean,
+    onShowSeekBarChange: (Boolean) -> Unit,
+    screenSaverEnabled: Boolean,
+    onScreenSaverChange: (Boolean) -> Unit,
     bgColorHex: String,
     onBgColorChange: (String) -> Unit,
     textColorHex: String,
@@ -435,92 +557,46 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = "Settings",
-            style = MaterialTheme.typography.headlineMedium,
-            color = currentTextColor,
-            fontFamily = syneMonoFamily
-        )
+        Text("Settings", style = MaterialTheme.typography.headlineMedium, color = currentTextColor, fontFamily = syneMonoFamily)
         Spacer(modifier = Modifier.height(24.dp))
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                "Show Playback Controls",
-                modifier = Modifier.weight(1f),
-                color = currentTextColor,
-                fontFamily = syneMonoFamily
-            )
-            Switch(checked = showControls, onCheckedChange = onShowControlsChange)
-        }
+        SettingsToggle("Playback Controls", showPlaybackControls, onShowPlaybackControlsChange, currentTextColor)
+        SettingsToggle("Volume Control", showVolumeControl, onShowVolumeControlChange, currentTextColor)
+        SettingsToggle("Seek Bar", showSeekBar, onShowSeekBarChange, currentTextColor)
+        SettingsToggle("Screen Saver", screenSaverEnabled, onScreenSaverChange, currentTextColor)
 
         Spacer(modifier = Modifier.height(16.dp))
         HorizontalDivider(color = currentTextColor.copy(alpha = 0.2f))
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            "Background Color (Hex)",
-            modifier = Modifier.fillMaxWidth(),
-            color = currentTextColor,
-            fontFamily = syneMonoFamily
-        )
-        TextField(
-            value = bgInput,
-            onValueChange = { 
-                bgInput = it
-                if (it.length == 7 && it.startsWith("#")) onBgColorChange(it)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
+        Text("Background Color (Hex)", modifier = Modifier.fillMaxWidth(), color = currentTextColor, fontFamily = syneMonoFamily)
+        TextField(value = bgInput, onValueChange = { bgInput = it; if (it.length == 7 && it.startsWith("#")) onBgColorChange(it) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            "Text Color (Hex)",
-            modifier = Modifier.fillMaxWidth(),
-            color = currentTextColor,
-            fontFamily = syneMonoFamily
-        )
-        TextField(
-            value = textInput,
-            onValueChange = { 
-                textInput = it
-                if (it.length == 7 && it.startsWith("#")) onTextColorChange(it)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
+        Text("Text Color (Hex)", modifier = Modifier.fillMaxWidth(), color = currentTextColor, fontFamily = syneMonoFamily)
+        TextField(value = textInput, onValueChange = { textInput = it; if (it.length == 7 && it.startsWith("#")) onTextColorChange(it) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
 
         Spacer(modifier = Modifier.height(16.dp))
         HorizontalDivider(color = currentTextColor.copy(alpha = 0.2f))
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            "Beefweb URL",
-            modifier = Modifier.fillMaxWidth(),
-            color = currentTextColor,
-            fontFamily = syneMonoFamily
-        )
-        TextField(
-            value = urlInput,
-            onValueChange = { urlInput = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        Button(
-            onClick = { onUrlUpdate(urlInput) },
-            modifier = Modifier.padding(top = 8.dp)
-        ) {
+        Text("Beefweb URL", modifier = Modifier.fillMaxWidth(), color = currentTextColor, fontFamily = syneMonoFamily)
+        TextField(value = urlInput, onValueChange = { urlInput = it }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        Button(onClick = { onUrlUpdate(urlInput) }, modifier = Modifier.padding(top = 8.dp)) {
             Text("Update URL", fontFamily = syneMonoFamily)
         }
 
         Spacer(modifier = Modifier.height(32.dp))
-        Button(onClick = onBack) {
-            Text("Back to Player", fontFamily = syneMonoFamily)
-        }
+        Button(onClick = onBack) { Text("Back to Player", fontFamily = syneMonoFamily) }
+    }
+}
+
+@Composable
+fun SettingsToggle(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(label, modifier = Modifier.weight(1f), color = color, fontFamily = syneMonoFamily)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -571,7 +647,7 @@ fun SetupScreen(
 @Composable
 fun PlayerScreenPortraitPreview() {
     FoobarThingyTheme {
-        PlayerScreen(showControls = true, textColor = Color.White)
+        PlayerScreen(showPlaybackControls = true, showVolumeControl = true, showSeekBar = true, screenSaverEnabled = false, textColor = Color.White)
     }
 }
 
@@ -579,6 +655,6 @@ fun PlayerScreenPortraitPreview() {
 @Composable
 fun PlayerScreenLandscapePreview() {
     FoobarThingyTheme {
-        PlayerScreen(showControls = true, textColor = Color.White)
+        PlayerScreen(showPlaybackControls = true, showVolumeControl = true, showSeekBar = true, screenSaverEnabled = false, textColor = Color.White)
     }
 }
