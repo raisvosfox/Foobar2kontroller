@@ -1,6 +1,7 @@
 package com.foxings.foobarthingy
 
 import retrofit2.Response
+import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Query
@@ -11,6 +12,11 @@ interface BeefwebApi {
     suspend fun getPlayerState(
         @Query("columns") columns: String = "%artist%,%title%,%album%,%length%"
     ): PlayerResponse
+
+    @POST("api/player")
+    suspend fun updatePlayerState(
+        @Body request: PlayerUpdateRequest
+    ): Response<Unit>
 
     @POST("api/player/play")
     suspend fun play(): Response<Unit>
@@ -29,14 +35,4 @@ interface BeefwebApi {
 
     @POST("api/player/previous")
     suspend fun previous(): Response<Unit>
-
-    @POST("api/player/volume/set")
-    suspend fun setVolume(
-        @Query("value") value: Double
-    ): Response<Unit>
-
-    @POST("api/player/seek")
-    suspend fun seek(
-        @Query("position") position: Double
-    ): Response<Unit>
 }

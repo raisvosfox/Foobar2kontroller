@@ -348,13 +348,13 @@ fun PlayerScreen(
                             },
                             onNext = { sendCommand { BeefwebClient.api.next() } },
                             onStop = { sendCommand { BeefwebClient.api.stop() } },
-                            onVolumeChange = { v -> sendCommand { BeefwebClient.api.setVolume(v) } },
+                            onVolumeChange = { v -> sendCommand { BeefwebClient.api.updatePlayerState(PlayerUpdateRequest(volume = v, volumeType = "db")) } },
                             localSeekPosition = localSeekPosition,
                             onLocalSeekPositionChange = { localSeekPosition = it },
                             onSeekingStarted = { isSeeking = true },
                             onSeekingFinished = { pos ->
                                 isSeeking = false
-                                sendCommand { BeefwebClient.api.seek(pos) }
+                                sendCommand { BeefwebClient.api.updatePlayerState(PlayerUpdateRequest(position = pos)) }
                             },
                             localVolume = localVolume,
                             onLocalVolumeChange = { localVolume = it },
@@ -406,13 +406,13 @@ fun PlayerScreen(
                     },
                     onNext = { sendCommand { BeefwebClient.api.next() } },
                     onStop = { sendCommand { BeefwebClient.api.stop() } },
-                    onVolumeChange = { v -> sendCommand { BeefwebClient.api.setVolume(v) } },
+                    onVolumeChange = { v -> sendCommand { BeefwebClient.api.updatePlayerState(PlayerUpdateRequest(volume = v, volumeType = "db")) } },
                     localSeekPosition = localSeekPosition,
                     onLocalSeekPositionChange = { localSeekPosition = it },
                     onSeekingStarted = { isSeeking = true },
                     onSeekingFinished = { pos ->
                         isSeeking = false
-                        sendCommand { BeefwebClient.api.seek(pos) }
+                        sendCommand { BeefwebClient.api.updatePlayerState(PlayerUpdateRequest(position = pos)) }
                     },
                     localVolume = localVolume,
                     onLocalVolumeChange = { localVolume = it },
@@ -594,6 +594,16 @@ fun SettingsScreen(
     var urlInput by remember { mutableStateOf(serverUrl) }
     var bgInput by remember { mutableStateOf(bgColorHex) }
     var textInput by remember { mutableStateOf(textColorHex) }
+    var githubVersion by remember { mutableStateOf("Loading...") }
+
+    LaunchedEffect(Unit) {
+        try {
+            val release = GitHubClient.api.getLatestRelease()
+            githubVersion = release.tag_name
+        } catch (e: Exception) {
+            githubVersion = "Unknown"
+        }
+    }
 
     Column(
         modifier = modifier
@@ -631,6 +641,9 @@ fun SettingsScreen(
         Button(onClick = { onUrlUpdate(urlInput) }, modifier = Modifier.padding(top = 8.dp)) {
             Text("Update URL", fontFamily = syneMonoFamily)
         }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("Version: $githubVersion", color = currentTextColor.copy(alpha = 0.5f), style = MaterialTheme.typography.labelMedium, fontFamily = syneMonoFamily)
 
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onBack) { Text("Back to Player", fontFamily = syneMonoFamily) }

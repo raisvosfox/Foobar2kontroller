@@ -45,3 +45,9 @@ data class Volume(
     val type: String,  // "db"
     val value: Double
 )
+
+data class PlayerUpdateRequest(
+    val volume: Double? = null,
+    val volumeType: String? = null,
+    val position: Double? = null
+)
