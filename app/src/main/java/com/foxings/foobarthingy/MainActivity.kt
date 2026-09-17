@@ -215,6 +215,11 @@ fun PlayerScreen(
     var volumeMin by remember { mutableDoubleStateOf(-100.0) }
     var volumeMax by remember { mutableDoubleStateOf(0.0) }
 
+    var localSeekPosition by remember { mutableDoubleStateOf(0.0) }
+    var isSeeking by remember { mutableStateOf(false) }
+    var localVolume by remember { mutableDoubleStateOf(0.0) }
+    var isChangingVolume by remember { mutableStateOf(false) }
+
     val scope = rememberCoroutineScope()
 
     var isFadingOut by remember { mutableStateOf(false) }
@@ -234,9 +239,15 @@ fun PlayerScreen(
             playbackState = response.player.playbackState
             artworkUrl = BeefwebClient.artworkUrl(activeItem.playlistId, activeItem.index)
             
-            position = activeItem.position
+            if (!isSeeking) {
+                position = activeItem.position
+                localSeekPosition = position
+            }
             duration = activeItem.duration
-            volume = response.player.volume.value
+            if (!isChangingVolume) {
+                volume = response.player.volume.value
+                localVolume = volume
+            }
             volumeMin = response.player.volume.min
             volumeMax = response.player.volume.max
             
@@ -324,9 +335,7 @@ fun PlayerScreen(
                             showPlaybackControls = showPlaybackControls,
                             showVolumeControl = showVolumeControl,
                             showSeekBar = showSeekBar,
-                            position = position,
                             duration = duration,
-                            volume = volume,
                             volumeMin = volumeMin,
                             volumeMax = volumeMax,
                             textColor = textColor,
@@ -339,8 +348,18 @@ fun PlayerScreen(
                             },
                             onNext = { sendCommand { BeefwebClient.api.next() } },
                             onStop = { sendCommand { BeefwebClient.api.stop() } },
-                            onSeek = { pos -> sendCommand { BeefwebClient.api.seek(pos) } },
-                            onVolumeChange = { v -> sendCommand { BeefwebClient.api.setVolume(v) } }
+                            onVolumeChange = { v -> sendCommand { BeefwebClient.api.setVolume(v) } },
+                            localSeekPosition = localSeekPosition,
+                            onLocalSeekPositionChange = { localSeekPosition = it },
+                            onSeekingStarted = { isSeeking = true },
+                            onSeekingFinished = { pos ->
+                                isSeeking = false
+                                sendCommand { BeefwebClient.api.seek(pos) }
+                            },
+                            localVolume = localVolume,
+                            onLocalVolumeChange = { localVolume = it },
+                            onVolumeChangeStarted = { isChangingVolume = true },
+                            onVolumeChangeFinished = { isChangingVolume = false }
                         )
                     }
                 }
@@ -374,9 +393,7 @@ fun PlayerScreen(
                     showPlaybackControls = showPlaybackControls,
                     showVolumeControl = showVolumeControl,
                     showSeekBar = showSeekBar,
-                    position = position,
                     duration = duration,
-                    volume = volume,
                     volumeMin = volumeMin,
                     volumeMax = volumeMax,
                     textColor = textColor,
@@ -389,8 +406,18 @@ fun PlayerScreen(
                     },
                     onNext = { sendCommand { BeefwebClient.api.next() } },
                     onStop = { sendCommand { BeefwebClient.api.stop() } },
-                    onSeek = { pos -> sendCommand { BeefwebClient.api.seek(pos) } },
-                    onVolumeChange = { v -> sendCommand { BeefwebClient.api.setVolume(v) } }
+                    onVolumeChange = { v -> sendCommand { BeefwebClient.api.setVolume(v) } },
+                    localSeekPosition = localSeekPosition,
+                    onLocalSeekPositionChange = { localSeekPosition = it },
+                    onSeekingStarted = { isSeeking = true },
+                    onSeekingFinished = { pos ->
+                        isSeeking = false
+                        sendCommand { BeefwebClient.api.seek(pos) }
+                    },
+                    localVolume = localVolume,
+                    onLocalVolumeChange = { localVolume = it },
+                    onVolumeChangeStarted = { isChangingVolume = true },
+                    onVolumeChangeFinished = { isChangingVolume = false }
                 )
             }
         }
@@ -420,9 +447,7 @@ fun InfoAndControls(
     showPlaybackControls: Boolean,
     showVolumeControl: Boolean,
     showSeekBar: Boolean,
-    position: Double,
     duration: Double,
-    volume: Double,
     volumeMin: Double,
     volumeMax: Double,
     textColor: Color,
@@ -430,8 +455,15 @@ fun InfoAndControls(
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onStop: () -> Unit,
-    onSeek: (Double) -> Unit,
-    onVolumeChange: (Double) -> Unit
+    onVolumeChange: (Double) -> Unit,
+    localSeekPosition: Double,
+    onLocalSeekPositionChange: (Double) -> Unit,
+    onSeekingStarted: () -> Unit,
+    onSeekingFinished: (Double) -> Unit,
+    localVolume: Double,
+    onLocalVolumeChange: (Double) -> Unit,
+    onVolumeChangeStarted: () -> Unit,
+    onVolumeChangeFinished: (Double) -> Unit
 ) {
     // 1. Song name - Syne Mono
     Text(
@@ -476,8 +508,14 @@ fun InfoAndControls(
     if (showSeekBar && duration > 0) {
         Spacer(modifier = Modifier.height(16.dp))
         Slider(
-            value = position.toFloat(),
-            onValueChange = { onSeek(it.toDouble()) },
+            value = localSeekPosition.toFloat(),
+            onValueChange = { 
+                onSeekingStarted()
+                onLocalSeekPositionChange(it.toDouble()) 
+            },
+            onValueChangeFinished = { 
+                onSeekingFinished(localSeekPosition)
+            },
             valueRange = 0f..duration.toFloat(),
             modifier = Modifier.fillMaxWidth(0.8f),
             colors = SliderDefaults.colors(
@@ -512,8 +550,15 @@ fun InfoAndControls(
             Text("VOL", style = MaterialTheme.typography.labelSmall, color = textColor, fontFamily = syneMonoFamily)
             Spacer(modifier = Modifier.width(8.dp))
             Slider(
-                value = volume.toFloat(),
-                onValueChange = { onVolumeChange(it.toDouble()) },
+                value = localVolume.toFloat(),
+                onValueChange = { 
+                    onVolumeChangeStarted()
+                    onLocalVolumeChange(it.toDouble())
+                    onVolumeChange(it.toDouble())
+                },
+                onValueChangeFinished = {
+                    onVolumeChangeFinished(localVolume)
+                },
                 valueRange = volumeMin.toFloat()..volumeMax.toFloat(),
                 modifier = Modifier.weight(1f),
                 colors = SliderDefaults.colors(
